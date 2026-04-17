@@ -11847,7 +11847,7 @@ class LLaDAMoEModel(TextModel):
                 raise ValueError(f"Unprocessed experts: {experts}")
 
 
-@ModelBase.register("HunYuanDenseV1ForCausalLM", "HunYuanVLForConditionalGeneration")
+@ModelBase.register("HunYuanDenseV1ForCausalLM")
 class HunYuanModel(TextModel):
     model_arch = gguf.MODEL_ARCH.HUNYUAN_DENSE
 
@@ -12018,6 +12018,123 @@ class HunyuanOCRVisionModel(MmprojModel):
         if ("mm.0." in new_name or "mm.2." in new_name) and new_name.endswith(".weight"):
             return gguf.GGMLQuantizationType.F16 if self.ftype == gguf.LlamaFileType.MOSTLY_F16 else gguf.GGMLQuantizationType.F32
         return super().tensor_force_quant(name, new_name, bid, n_dims)
+
+
+@ModelBase.register("HunYuanVLForConditionalGeneration")
+class HunyuanVLVisionModel(MmprojModel):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        assert self.hparams_vision is not None
+        # Compute image_size from max_image_size if not explicitly set
+        if "image_size" not in self.hparams_vision:
+            self.hparams_vision["image_size"] = self.hparams_vision.get("max_image_size", 2048)
+
+    def modify_tensors(self, data_torch: Tensor, name: str, bid: int | None) -> Iterable[tuple[str, Tensor]]:
+        # Skip text-model tensors (they go into the LLM gguf file)
+        if name.startswith("model."):
+            return
+
+        # Remap PatchMerger tensors to match HunyuanOCR GGUF naming exactly,
+        # so that the same clip.cpp tensor-loading case can be shared.
+        #
+        # Python name                    -> GGUF name
+        # vit.perceive.proj.0.*          -> mm.0.*
+        # vit.perceive.proj.2.*          -> mm.2.*
+        # vit.perceive.mlp.*             -> mm.model.fc.*
+        # vit.perceive.before_rms.*      -> mm.pre_norm.*
+        # vit.perceive.after_rms.*       -> mm.post_norm.*
+        # vit.perceive.image_newline     -> v.image_newline
+        # vit.perceive.image_begin       -> mm.image_begin
+        # vit.perceive.image_end         -> mm.image_end
+        # vit.perceive.image_sep         -> v.view_seperator
+        if name.startswith("vit.perceive."):
+            suffix = name[len("vit.perceive."):]
+            if suffix.startswith("proj."):
+                # proj.0.weight -> mm.0.weight, proj.2.weight -> mm.2.weight
+                new_name = "mm." + suffix[len("proj."):]
+            elif suffix.startswith("mlp."):
+                # mlp.weight -> mm.model.fc.weight
+                new_name = "mm.model.fc." + suffix[len("mlp."):]
+            elif suffix.startswith("before_rms."):
+                # before_rms.weight -> mm.pre_norm.weight
+                new_name = "mm.pre_norm." + suffix[len("before_rms."):]
+            elif suffix.startswith("after_rms."):
+                # after_rms.weight -> mm.post_norm.weight
+                new_name = "mm.post_norm." + suffix[len("after_rms."):]
+            elif suffix == "image_newline":
+                new_name = "v.image_newline"
+            elif suffix == "image_sep":
+                new_name = "v.view_seperator"
+            else:
+                # image_begin, image_end -> mm.image_begin, mm.image_end
+                new_name = "mm." + suffix
+            yield (new_name, data_torch)
+            return
+
+        # All other vit.* tensors (patch embed, position embed, transformer layers)
+        # go through the standard MmprojModel mapping
+        if name.startswith("vit."):
+            if "position_embedding" in name:
+                data_torch = data_torch[1:]  # [16385, n_embd] -> [16384, n_embd]
+            yield from super().modify_tensors(data_torch, name, bid)
+            return
+
+        # Fallback for any remaining tensors
+        yield from super().modify_tensors(data_torch, name, bid)
+
+    def tensor_force_quant(self, name: str, new_name: str, bid: int | None, n_dims: int):
+        # Keep the final linear projection (mm.mlp.weight) in F16 to preserve precision
+        if new_name == "mm.mlp.weight":
+            return gguf.GGMLQuantizationType.F16
+        if ("mm.proj." in new_name) and new_name.endswith(".weight"):
+            return gguf.GGMLQuantizationType.F16 if self.ftype == gguf.LlamaFileType.MOSTLY_F16 else gguf.GGMLQuantizationType.F32
+        return super().tensor_force_quant(name, new_name, bid, n_dims)
+
+    def set_gguf_parameters(self):
+        super().set_gguf_parameters()
+        assert self.hparams_vision is not None
+        hparams = self.hparams_vision
+
+        self.gguf_writer.add_clip_projector_type(gguf.VisionProjectorType.HUNYUANVL)
+        self.gguf_writer.add_vision_use_gelu(True)
+
+        if (rms_norm_eps := hparams.get("rms_norm_eps")) is not None:
+            self.gguf_writer.add_vision_attention_layernorm_eps(rms_norm_eps)
+        if (merge_size := hparams.get("spatial_merge_size")) is not None:
+            self.gguf_writer.add_vision_spatial_merge_size(int(merge_size))
+
+
+@ModelBase.register("HunYuanVLForConditionalGeneration")
+class HunyuanVLTextModel(HunYuanModel):
+    model_arch = gguf.MODEL_ARCH.HUNYUAN_VL
+
+    def set_gguf_parameters(self):
+        super().set_gguf_parameters()
+
+        if self.rope_parameters.get("rope_type") == "xdrope":
+            alpha = float(self.rope_parameters.get("alpha", 50))
+            base  = float(self.rope_parameters.get("rope_theta", 10000.0))
+
+            # Write raw values; C++ computes: freq_base = base * alpha^(dim/(dim-2))
+            self.gguf_writer.add_rope_freq_base(base)
+            self.gguf_writer.add_rope_scaling_alpha(alpha)
+            self.gguf_writer.add_rope_scaling_type(gguf.RopeScalingType.NONE)
+            self.gguf_writer.add_rope_scaling_factor(1)
+            self.gguf_writer.add_rope_scaling_orig_ctx_len(256 * 1024)
+            self.gguf_writer.add_context_length(256 * 1024)
+
+            # xdrope_section defines which head-dim slices use each positional axis
+            # Reuse the M-RoPE rope_dimension_sections mechanism
+            xdrope_section = list(self.rope_parameters.get("xdrope_section", []))
+            while len(xdrope_section) < 4:
+                xdrope_section.append(0)
+            self.gguf_writer.add_rope_dimension_sections(xdrope_section[:4])
+
+    def modify_tensors(self, data_torch: Tensor, name: str, bid: int | None) -> Iterable[tuple[str, Tensor]]:
+        # Skip vision tensors — they are written by HunyuanVLVisionModel
+        if name.startswith("vit."):
+            return
+        yield from super().modify_tensors(data_torch, name, bid)
 
 
 @ModelBase.register("SmolLM3ForCausalLM")

@@ -180,6 +180,60 @@ struct decode_embd_batch {
         }
     }
 
+    void set_position_mrope_hunyuanvl(llama_pos pos_0, int nx, int ny, llama_seq_id seq_id, int image_count = 0) {
+        GGML_ASSERT(n_pos_per_embd == 4);
+        const int n_tokens_expected = 2 + ny * (nx + 1);
+        GGML_ASSERT(nx > 0 && ny > 0 && n_tokens_expected == batch.n_tokens);
+        seq_id_0[0] = seq_id;
+
+        int i = 0;
+        // BOI token — all 4 dims = sequential index (same as non-image tokens)
+        {
+            llama_pos seq_pos = pos_0 + i;
+            pos[i                     ] = seq_pos;
+            pos[i + batch.n_tokens    ] = seq_pos;
+            pos[i + batch.n_tokens * 2] = seq_pos;
+            pos[i + batch.n_tokens * 3] = seq_pos;
+            i++;
+        }
+
+        for (int y = 0; y < ny; y++) {
+            for (int x = 0; x < nx; x++) {
+                llama_pos seq_pos = pos_0 + i;
+                pos[i                     ] = seq_pos;      // dim-0: sequential
+                pos[i + batch.n_tokens    ] = x;            // dim-1: w coord
+                pos[i + batch.n_tokens * 2] = y;            // dim-2: h coord
+                pos[i + batch.n_tokens * 3] = image_count;  // dim-3: image index
+                i++;
+            }
+            {
+                llama_pos seq_pos = pos_0 + i;
+                pos[i                     ] = seq_pos;      // dim-0: sequential
+                pos[i + batch.n_tokens    ] = nx;           // dim-1: w = nx (end of row)
+                pos[i + batch.n_tokens * 2] = y;            // dim-2: h coord
+                pos[i + batch.n_tokens * 3] = image_count;  // dim-3: image index
+                i++;
+            }
+        }
+
+        {
+            llama_pos seq_pos = pos_0 + i;
+            pos[i                     ] = seq_pos;
+            pos[i + batch.n_tokens    ] = seq_pos;
+            pos[i + batch.n_tokens * 2] = seq_pos;
+            pos[i + batch.n_tokens * 3] = seq_pos;
+            i++;
+        }
+
+        GGML_ASSERT(i == batch.n_tokens);
+
+        for (int j = 0; j < batch.n_tokens; j++) {
+            batch.n_seq_id[j] = 1;
+            batch.seq_id  [j] = seq_id_0.data();
+            batch.logits  [j] = false;
+        }
+    }
+
     // M-RoPE for audio
     void set_position_mrope_1d(llama_pos pos_0, llama_seq_id seq_id) {
         GGML_ASSERT(n_pos_per_embd == 4);
@@ -266,10 +320,16 @@ int32_t mtmd_helper_decode_image_chunk(
                 LOG_ERR("failed to decode chunk: image tokens are null\n");
                 return -1;
             }
-            const auto n_tokens = mtmd_image_tokens_get_n_tokens(image_tokens);
-            std::vector<mtmd_decoder_pos> rel_pos(n_tokens);
-            mtmd_helper_image_get_decoder_pos(image_tokens, rel_pos.data());
-            batch_embd.set_position_mrope_2d(n_past, rel_pos, seq_id);
+            if (mtmd_decode_use_mrope_hunyuanvl(ctx)) {
+                const int nx = mtmd_image_tokens_get_nx(image_tokens);
+                const int ny = mtmd_image_tokens_get_ny(image_tokens);
+                batch_embd.set_position_mrope_hunyuanvl(n_past, nx, ny, seq_id);
+            } else {
+                const auto n_tokens = mtmd_image_tokens_get_n_tokens(image_tokens);
+                std::vector<mtmd_decoder_pos> rel_pos(n_tokens);
+                mtmd_helper_image_get_decoder_pos(image_tokens, rel_pos.data());
+                batch_embd.set_position_mrope_2d(n_past, rel_pos, seq_id);
+            }
         } else if (chunk_type == MTMD_INPUT_CHUNK_TYPE_AUDIO) {
             batch_embd.set_position_mrope_1d(n_past, seq_id);
         } else {
@@ -305,7 +365,11 @@ int32_t mtmd_helper_decode_image_chunk(
         i_batch++;
     }
 
-    n_past += mtmd_input_chunk_get_n_pos(chunk);
+    if (mtmd_decode_use_mrope_hunyuanvl(ctx)) {
+        n_past += (llama_pos)n_tokens;
+    } else {
+        n_past += mtmd_input_chunk_get_n_pos(chunk);
+    }
     *new_n_past = n_past;
 
     if (use_non_causal) {

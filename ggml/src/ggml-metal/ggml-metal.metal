@@ -4991,12 +4991,12 @@ kernel void kernel_upscale_nearest_f32(
     const int64_t i2 = tgpig.y;
     const int64_t i1 = tgpig.x;
 
-    const int64_t i03 = i3/args.sf3;
-    const int64_t i02 = i2/args.sf2;
-    const int64_t i01 = i1/args.sf1;
+    const int64_t i03 = MIN(i3/args.sf3, args.ne03 - 1);
+    const int64_t i02 = MIN(i2/args.sf2, args.ne02 - 1);
+    const int64_t i01 = MIN(i1/args.sf1, args.ne01 - 1);
 
     for (int i0 = tpitg.x; i0 < args.ne0; i0 += ntg.x) {
-        const int64_t i00 = i0/args.sf0;
+        const int64_t i00 = MIN(i0/args.sf0, args.ne00 - 1);
 
         device const float * src0_ptr = (device const float *) (src0 + i03*args.nb03 + i02*args.nb02 + i01*args.nb01 + i00*args.nb00);
         device       float * dst_ptr  = (device       float *) (dst  +  i3*args.nb3  +  i2*args.nb2  +  i1*args.nb1  +  i0*args.nb0);

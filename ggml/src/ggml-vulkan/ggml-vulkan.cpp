@@ -10777,6 +10777,11 @@ static void ggml_vk_upscale(ggml_backend_vk_context * ctx, vk_context& subctx, c
     float sf3 = (float)ne3 / ne03;
     float pixel_offset = 0.5f;
 
+    if (mode & GGML_SCALE_FLAG_CUSTOM_SF) {
+        sf0 = ggml_get_op_params_f32(dst, 1);
+        sf1 = ggml_get_op_params_f32(dst, 2);
+    }
+
     if (mode & GGML_SCALE_FLAG_ALIGN_CORNERS) {
         sf0 = ne0 > 1 && ne00 > 1 ? (float)(ne0 - 1) / (ne00 - 1) : sf0;
         sf1 = ne1 > 1 && ne01 > 1 ? (float)(ne1 - 1) / (ne01 - 1) : sf1;

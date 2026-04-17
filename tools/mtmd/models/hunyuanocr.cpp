@@ -1,11 +1,35 @@
 #include "models.h"
+#include <cmath>
 
 ggml_cgraph * clip_graph_hunyuanocr::build() {
     const int merge = hparams.n_merge;
     const int pw    = n_patches_x;
     const int ph    = n_patches_y;
 
-    ggml_tensor * pos_embd = resize_position_embeddings(GGML_SCALE_MODE_BILINEAR);
+    // Position embedding interpolation.
+    // HunyuanVL uses explicit scale factors (target+0.1)/n_grid to match Python's behavior.
+    // HunyuanOCR uses the same square layout and the standard ratio-based interpolation.
+    ggml_tensor * pos_embd = nullptr;
+    if (proj_type == PROJECTOR_TYPE_HUNYUANVL && model.position_embeddings) {
+        const int64_t n_pos  = model.position_embeddings->ne[1]; // n_grid * n_grid
+        const int     n_grid = (int)std::round(std::sqrt((double)n_pos));
+        ggml_tensor * pos_patch = model.position_embeddings;
+        if (ph == n_grid && pw == n_grid) {
+            pos_embd = pos_patch; // no interpolation needed
+        } else {
+            pos_patch = ggml_reshape_3d(ctx0, pos_patch, n_embd, n_grid, n_grid);
+            pos_patch = ggml_permute(ctx0, pos_patch, 2, 0, 1, 3);
+            pos_patch = ggml_cont(ctx0, pos_patch);
+            pos_patch = ggml_interpolate_sf(ctx0, pos_patch, pw, ph, n_embd, 1,
+                                            GGML_SCALE_MODE_BILINEAR,
+                                            (float)(pw + 0.1f) / n_grid,
+                                            (float)(ph + 0.1f) / n_grid);
+            pos_patch = ggml_permute(ctx0, pos_patch, 1, 2, 0, 3);
+            pos_embd  = ggml_cont_2d(ctx0, pos_patch, n_embd, ph * pw);
+        }
+    } else {
+        pos_embd = resize_position_embeddings(GGML_SCALE_MODE_BILINEAR);
+    }
 
     ggml_tensor * inp = build_inp();
     ggml_tensor * cur = build_vit(inp, n_patches, NORM_TYPE_NORMAL, hparams.ffn_op, pos_embd, nullptr);

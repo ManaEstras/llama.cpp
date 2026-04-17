@@ -26,8 +26,8 @@ layout (binding = 1) writeonly buffer D {D_TYPE data_d[];};
 layout (constant_id = 0) const uint scale_mode = 0;
 
 float fetch_nearest(uint i10, uint i11, uint i12, uint i13) {
-    const uint i00 = uint(i10 / p.sf0);
-    const uint i01 = uint(i11 / p.sf1);
+    const uint i00 = min(uint(i10 / p.sf0), p.ne00 - 1);
+    const uint i01 = min(uint(i11 / p.sf1), p.ne01 - 1);
     const uint i02 = uint(i12 / p.sf2);
     const uint i03 = uint(i13 / p.sf3);
 

@@ -9186,6 +9186,11 @@ static void ggml_cl_upscale(ggml_backend_t backend, const ggml_tensor * src0, gg
 
     float pixel_offset = 0.5f;
 
+    if (mode_flags & GGML_SCALE_FLAG_CUSTOM_SF) {
+        sf0 = ggml_get_op_params_f32(dst, 1);
+        sf1 = ggml_get_op_params_f32(dst, 2);
+    }
+
     CL_CHECK(clSetKernelArg(kernel, 0, sizeof(cl_mem),    &extra_src0->data_device));
     CL_CHECK(clSetKernelArg(kernel, 1, sizeof(cl_ulong),  &off_src0));
     CL_CHECK(clSetKernelArg(kernel, 2, sizeof(cl_mem),    &extra_dst->data_device));
@@ -9196,14 +9201,18 @@ static void ggml_cl_upscale(ggml_backend_t backend, const ggml_tensor * src0, gg
     CL_CHECK(clSetKernelArg(kernel, 7, sizeof(cl_ulong),  &nb03));
 
     if (mode == GGML_SCALE_MODE_NEAREST) {
-        CL_CHECK(clSetKernelArg(kernel, 8, sizeof(int),       &ne0));
-        CL_CHECK(clSetKernelArg(kernel, 9, sizeof(int),       &ne1));
-        CL_CHECK(clSetKernelArg(kernel, 10, sizeof(int),      &ne2));
-        CL_CHECK(clSetKernelArg(kernel, 11, sizeof(int),      &ne3));
-        CL_CHECK(clSetKernelArg(kernel, 12, sizeof(float),    &sf0));
-        CL_CHECK(clSetKernelArg(kernel, 13, sizeof(float),    &sf1));
-        CL_CHECK(clSetKernelArg(kernel, 14, sizeof(float),    &sf2));
-        CL_CHECK(clSetKernelArg(kernel, 15, sizeof(float),    &sf3));
+        CL_CHECK(clSetKernelArg(kernel, 8, sizeof(int),       &ne00));
+        CL_CHECK(clSetKernelArg(kernel, 9, sizeof(int),       &ne01));
+        CL_CHECK(clSetKernelArg(kernel, 10, sizeof(int),      &ne02));
+        CL_CHECK(clSetKernelArg(kernel, 11, sizeof(int),      &ne03));
+        CL_CHECK(clSetKernelArg(kernel, 12, sizeof(int),       &ne0));
+        CL_CHECK(clSetKernelArg(kernel, 13, sizeof(int),       &ne1));
+        CL_CHECK(clSetKernelArg(kernel, 14, sizeof(int),      &ne2));
+        CL_CHECK(clSetKernelArg(kernel, 15, sizeof(int),      &ne3));
+        CL_CHECK(clSetKernelArg(kernel, 16, sizeof(float),    &sf0));
+        CL_CHECK(clSetKernelArg(kernel, 17, sizeof(float),    &sf1));
+        CL_CHECK(clSetKernelArg(kernel, 18, sizeof(float),    &sf2));
+        CL_CHECK(clSetKernelArg(kernel, 19, sizeof(float),    &sf3));
     } else if (mode == GGML_SCALE_MODE_BILINEAR) {
         if (mode_flags & GGML_SCALE_FLAG_ALIGN_CORNERS) {
             sf0 = ne0 > 1 && ne00 > 1 ? (float)(ne0 - 1) / (ne00 - 1) : sf0;
