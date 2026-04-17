@@ -3901,6 +3901,11 @@ int ggml_metal_op_upscale(ggml_metal_op_t ctx, int idx) {
 
     float poffs = 0.5f;
 
+    if (mode_flags & GGML_SCALE_FLAG_CUSTOM_SF) {
+        sf0 = ggml_get_op_params_f32(op, 1);
+        sf1 = ggml_get_op_params_f32(op, 2);
+    }
+
     if (mode_flags & GGML_SCALE_FLAG_ALIGN_CORNERS) {
         poffs = 0.0f;
         sf0 = ne0 > 1 && ne00 > 1 ? (float)(ne0 - 1) / (ne00 - 1) : sf0;

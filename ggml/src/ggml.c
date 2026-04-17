@@ -5014,6 +5014,25 @@ struct ggml_tensor * ggml_interpolate(
     return ggml_interpolate_impl(ctx, a, ne0, ne1, ne2, ne3, mode);
 }
 
+struct ggml_tensor * ggml_interpolate_sf(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * a,
+        int64_t               ne0,
+        int64_t               ne1,
+        int64_t               ne2,
+        int64_t               ne3,
+        uint32_t              mode,
+        float                 sf0,
+        float                 sf1) {
+    GGML_ASSERT(sf0 > 0.0f && "ggml_interpolate_sf: sf0 must be positive");
+    GGML_ASSERT(sf1 > 0.0f && "ggml_interpolate_sf: sf1 must be positive");
+    struct ggml_tensor * result = ggml_interpolate_impl(ctx, a, ne0, ne1, ne2, ne3,
+                                                        mode | GGML_SCALE_FLAG_CUSTOM_SF);
+    ggml_set_op_params_f32(result, 1, sf0);
+    ggml_set_op_params_f32(result, 2, sf1);
+    return result;
+}
+
 // ggml_pad
 
 struct ggml_tensor * ggml_pad(

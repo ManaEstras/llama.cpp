@@ -7,6 +7,10 @@ kernel void kernel_upscale(
     ulong nb01,
     ulong nb02,
     ulong nb03,
+    int ne00,
+    int ne01,
+    int ne02,
+    int ne03,
     int ne10,
     int ne11,
     int ne12,
@@ -31,10 +35,10 @@ kernel void kernel_upscale(
     int i12 = (index / (ne10 * ne11)) % ne12;
     int i13 = index / (ne10 * ne11 * ne12);
 
-    int i00 = (int)(i10 / sf0);
-    int i01 = (int)(i11 / sf1);
-    int i02 = (int)(i12 / sf2);
-    int i03 = (int)(i13 / sf3);
+    int i00 = min((int)(i10 / sf0), ne00 - 1);
+    int i01 = min((int)(i11 / sf1), ne01 - 1);
+    int i02 = min((int)(i12 / sf2), ne02 - 1);
+    int i03 = min((int)(i13 / sf3), ne03 - 1);
 
     ulong offset_src_element = (ulong)i03 * nb03 + (ulong)i02 * nb02 + (ulong)i01 * nb01 + (ulong)i00 * nb00;
     global const float * src_element_ptr = (global const float *)(src_base + offset_src_element);

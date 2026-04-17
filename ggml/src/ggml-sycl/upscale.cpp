@@ -2,6 +2,7 @@
 
 static void upscale_f32(const float * x, float * dst,
         const int nb00, const int nb01, const int nb02, const int nb03,
+        const int ne00, const int ne01, const int ne02, const int ne03,
         const int ne10, const int ne11, const int ne12, const int ne13,
         const float sf0, const float sf1, const float sf2, const float sf3) {
     auto item_ct1 = sycl::ext::oneapi::this_work_item::get_nd_item<3>();
@@ -15,10 +16,10 @@ static void upscale_f32(const float * x, float * dst,
     int i12 = (index / (ne10 * ne11)) % ne12;
     int i13 = (index / (ne10 * ne11 * ne12)) % ne13;
 
-    int i00 = i10 / sf0;
-    int i01 = i11 / sf1;
-    int i02 = i12 / sf2;
-    int i03 = i13 / sf3;
+    int i00 = sycl::min((int)(i10 / sf0), ne00 - 1);
+    int i01 = sycl::min((int)(i11 / sf1), ne01 - 1);
+    int i02 = sycl::min((int)(i12 / sf2), ne02 - 1);
+    int i03 = sycl::min((int)(i13 / sf3), ne03 - 1);
 
     dst[index] = *((const float*)((const char*)x + i03 * nb03 + i02 * nb02 +
                                   i01 * nb01 + i00 * nb00));
@@ -256,6 +257,10 @@ static void upscale_f32_sycl(const float *   x,
                              const int       nb01,
                              const int       nb02,
                              const int       nb03,
+                             const int       ne00,
+                             const int       ne01,
+                             const int       ne02,
+                             const int       ne03,
                              const int       ne10,
                              const int       ne11,
                              const int       ne12,
@@ -273,7 +278,7 @@ static void upscale_f32_sycl(const float *   x,
             sycl::range<3>(1, 1, num_blocks) * sycl::range<3>(1, 1, SYCL_UPSCALE_BLOCK_SIZE),
              sycl::range<3>(1, 1, SYCL_UPSCALE_BLOCK_SIZE)),
         [=](sycl::nd_item<3> /*item_ct1*/) {
-            upscale_f32(x, dst, nb00, nb01, nb02, nb03, ne10, ne11, ne12, ne13, sf0, sf1, sf2, sf3);
+            upscale_f32(x, dst, nb00, nb01, nb02, nb03, ne00, ne01, ne02, ne03, ne10, ne11, ne12, ne13, sf0, sf1, sf2, sf3);
         });
 }
 
@@ -376,6 +381,10 @@ void ggml_sycl_op_upscale(ggml_backend_sycl_context & ctx, ggml_tensor * dst) {
     const float sf3 = (float)dst->ne[3]/src0->ne[3];
 
     float pixel_offset = 0.5f;
+    if (mode_flags & GGML_SCALE_FLAG_CUSTOM_SF) {
+        sf0 = ggml_get_op_params_f32(dst, 1);
+        sf1 = ggml_get_op_params_f32(dst, 2);
+    }
     if (mode_flags & GGML_SCALE_FLAG_ALIGN_CORNERS) {
         sf0 = dst->ne[0] > 1 && src0->ne[0] > 1
             ? (float)(dst->ne[0] - 1) / (src0->ne[0] - 1)
@@ -389,6 +398,7 @@ void ggml_sycl_op_upscale(ggml_backend_sycl_context & ctx, ggml_tensor * dst) {
     if (mode == GGML_SCALE_MODE_NEAREST) {
         upscale_f32_sycl(
             src0_d, dst_d, src0->nb[0], src0->nb[1], src0->nb[2], src0->nb[3],
+            src0->ne[0], src0->ne[1], src0->ne[2], src0->ne[3],
             dst->ne[0], dst->ne[1], dst->ne[2], dst->ne[3], sf0, sf1, sf2, sf3, stream);
     } else if (mode == GGML_SCALE_MODE_BILINEAR) {
         const bool antialias = (mode_flags & GGML_SCALE_FLAG_ANTIALIAS);

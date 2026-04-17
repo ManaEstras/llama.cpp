@@ -2222,6 +2222,7 @@ extern "C" {
     enum ggml_scale_flag {
         GGML_SCALE_FLAG_ALIGN_CORNERS = (1 << 8),
         GGML_SCALE_FLAG_ANTIALIAS     = (1 << 9),
+        GGML_SCALE_FLAG_CUSTOM_SF     = (1 << 10), // use explicit scale factors stored in op_params[1], op_params[2]
     };
 
     // interpolate
@@ -2254,6 +2255,22 @@ extern "C" {
             int64_t               ne2,
             int64_t               ne3,
             uint32_t              mode); // ggml_scale_mode [ | ggml_scale_flag...]
+
+    // Like ggml_interpolate but with explicit scale factors sf0 and sf1 for the first two
+    // dimensions instead of deriving them from ne0/ne1 / src.ne0/src.ne1.
+    // Useful when the desired coordinate mapping differs from the simple ratio
+    // (e.g. PyTorch scale_factor=(H+0.1)/n_grid instead of H/n_grid).
+    // Sets GGML_SCALE_FLAG_CUSTOM_SF internally; sf0 corresponds to dim0, sf1 to dim1.
+    GGML_API struct ggml_tensor * ggml_interpolate_sf(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * a,
+            int64_t               ne0,
+            int64_t               ne1,
+            int64_t               ne2,
+            int64_t               ne3,
+            uint32_t              mode, // ggml_scale_mode [ | ggml_scale_flag...]
+            float                 sf0,
+            float                 sf1);
 
     // pad each dimension with zeros: [x, ..., x] -> [x, ..., x, 0, ..., 0]
     GGML_API struct ggml_tensor * ggml_pad(

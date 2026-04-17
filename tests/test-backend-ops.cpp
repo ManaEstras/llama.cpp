@@ -5778,6 +5778,40 @@ struct test_interpolate : public test_case {
     }
 };
 
+// GGML_OP_UPSCALE (via ggml_interpolate_sf) - custom scale factors
+struct test_interpolate_sf : public test_case {
+    const ggml_type type;
+    const std::array<int64_t, 4> ne;
+    const std::array<int64_t, 4> ne_tgt;
+    const ggml_scale_mode mode;
+    const float sf0;
+    const float sf1;
+
+    std::string vars() override {
+        return VARS_TO_STR6(type, ne, ne_tgt, mode, sf0, sf1);
+    }
+
+    test_interpolate_sf(ggml_type type = GGML_TYPE_F32,
+            std::array<int64_t, 4> ne     = {2, 5, 7, 11},
+            std::array<int64_t, 4> ne_tgt = {5, 7, 11, 13},
+            ggml_scale_mode mode = GGML_SCALE_MODE_BILINEAR,
+            float sf0 = 1.0f,
+            float sf1 = 1.0f)
+        : type(type), ne(ne), ne_tgt(ne_tgt), mode(mode), sf0(sf0), sf1(sf1) {}
+
+    ggml_tensor * build_graph(ggml_context * ctx) override {
+        ggml_tensor * a = ggml_new_tensor(ctx, type, 4, ne.data());
+        ggml_set_name(a, "a");
+
+        ggml_tensor * out = ggml_interpolate_sf(ctx, a,
+            ne_tgt[0], ne_tgt[1], ne_tgt[2], ne_tgt[3],
+            mode, sf0, sf1);
+        ggml_set_name(out, "out");
+
+        return out;
+    }
+};
+
 // GGML_OP_GROUP_NORM
 struct test_group_norm : public test_case {
     const ggml_type type;
@@ -8441,6 +8475,27 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
         test_cases.emplace_back(new test_interpolate(GGML_TYPE_F32, {2, 5, 7, 11}, {5, 7, 11, 13}, (ggml_scale_mode)(mode | GGML_SCALE_FLAG_ALIGN_CORNERS)));
         test_cases.emplace_back(new test_interpolate(GGML_TYPE_F32, {1, 4, 3, 2}, {2, 8, 3, 2}, (ggml_scale_mode)(mode | GGML_SCALE_FLAG_ALIGN_CORNERS)));
         test_cases.emplace_back(new test_interpolate(GGML_TYPE_F32, {4, 1, 3, 2}, {1, 1, 3, 2}, (ggml_scale_mode)(mode | GGML_SCALE_FLAG_ALIGN_CORNERS)));
+    }
+
+    // ggml_interpolate_sf - custom scale factors 
+    for (ggml_scale_mode mode : {GGML_SCALE_MODE_NEAREST, GGML_SCALE_MODE_BILINEAR, GGML_SCALE_MODE_BICUBIC, ggml_scale_mode(GGML_SCALE_MODE_BILINEAR | GGML_SCALE_FLAG_ANTIALIAS)}) {
+        test_cases.emplace_back(new test_interpolate_sf(GGML_TYPE_F32, {2, 5,  7, 11}, {5, 7, 11, 13}, mode, 5.0f/2.0f, 7.0f/5.0f));
+        test_cases.emplace_back(new test_interpolate_sf(GGML_TYPE_F32, {5, 7, 11, 13}, {2, 5,  7, 11}, mode, 2.0f/5.0f, 5.0f/7.0f));
+    }
+    for (ggml_scale_mode mode : {GGML_SCALE_MODE_BILINEAR, GGML_SCALE_MODE_BICUBIC}) {
+        test_cases.emplace_back(new test_interpolate_sf(GGML_TYPE_F32, {2, 5, 7, 11}, {5, 7, 11, 13}, (ggml_scale_mode)(mode | GGML_SCALE_FLAG_ALIGN_CORNERS), 5.0f/2.0f, 7.0f/5.0f));
+        test_cases.emplace_back(new test_interpolate_sf(GGML_TYPE_F32, {1, 4, 3, 2}, {2, 8, 3, 2}, (ggml_scale_mode)(mode | GGML_SCALE_FLAG_ALIGN_CORNERS), 2.0f/1.0f, 8.0f/4.0f));
+        test_cases.emplace_back(new test_interpolate_sf(GGML_TYPE_F32, {4, 1, 3, 2}, {1, 1, 3, 2}, (ggml_scale_mode)(mode | GGML_SCALE_FLAG_ALIGN_CORNERS), 1.0f/4.0f, 1.0f/1.0f));
+    }
+    for (ggml_scale_mode mode : {GGML_SCALE_MODE_NEAREST, GGML_SCALE_MODE_BILINEAR, GGML_SCALE_MODE_BICUBIC, ggml_scale_mode(GGML_SCALE_MODE_BILINEAR | GGML_SCALE_FLAG_ANTIALIAS)}) {
+        test_cases.emplace_back(new test_interpolate_sf(GGML_TYPE_F32, {14, 14, 1152, 1}, {28, 28, 1152, 1}, mode, (28.0f+0.1f)/14.0f, (28.0f+0.1f)/14.0f));
+        test_cases.emplace_back(new test_interpolate_sf(GGML_TYPE_F32, {14, 14, 768, 1},  {20, 16,  768, 1}, mode, (20.0f+0.1f)/14.0f, (16.0f+0.1f)/14.0f));
+        test_cases.emplace_back(new test_interpolate_sf(GGML_TYPE_F32, {8, 8, 64, 1}, {8, 8, 64, 1}, mode, 1.0f, 1.0f));
+        test_cases.emplace_back(new test_interpolate_sf(GGML_TYPE_F32, {28, 28, 768, 1}, {14, 14, 768, 1}, mode, (14.0f+0.1f)/28.0f, (14.0f+0.1f)/28.0f));
+    }
+    for (ggml_scale_mode mode : {GGML_SCALE_MODE_NEAREST, GGML_SCALE_MODE_BILINEAR, GGML_SCALE_MODE_BICUBIC, ggml_scale_mode(GGML_SCALE_MODE_BILINEAR | GGML_SCALE_FLAG_ANTIALIAS)}) {
+        test_cases.emplace_back(new test_interpolate_sf(GGML_TYPE_F32, {10, 10, 64, 1}, {20, 20, 64, 1}, mode, 1.5f, 1.5f));
+        test_cases.emplace_back(new test_interpolate_sf(GGML_TYPE_F32, {10, 10, 64, 1}, {20, 16, 64, 1}, mode, 1.5f, 1.2f));
     }
 
     test_cases.emplace_back(new test_sum());

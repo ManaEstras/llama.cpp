@@ -7551,6 +7551,11 @@ static void ggml_compute_forward_upscale_f32(
     const int32_t mode_flags = ggml_get_op_params_i32(dst, 0);
     const ggml_scale_mode mode = (ggml_scale_mode) (mode_flags & 0xFF);
 
+    if (mode_flags & GGML_SCALE_FLAG_CUSTOM_SF) {
+        sf0 = ggml_get_op_params_f32(dst, 1);
+        sf1 = ggml_get_op_params_f32(dst, 2);
+    }
+
     if (mode_flags & GGML_SCALE_FLAG_ALIGN_CORNERS) {
         pixel_offset = 0.0f;
         sf0 = ne0 > 1 && ne00 > 1 ? (float)(ne0 - 1) / (ne00 - 1) : sf0;
@@ -7559,13 +7564,13 @@ static void ggml_compute_forward_upscale_f32(
 
     if (mode == GGML_SCALE_MODE_NEAREST) {
         for (int64_t i3 = 0; i3 < ne3; i3++) {
-            const int64_t i03 = i3 / sf3;
+            const int64_t i03 = MIN((int64_t)(i3 / sf3), ne03 - 1);
             for (int64_t i2 = ith; i2 < ne2; i2 += nth) {
-                const int64_t i02 = i2 / sf2;
+                const int64_t i02 = MIN((int64_t)(i2 / sf2), ne02 - 1);
                 for (int64_t i1 = 0; i1 < ne1; i1++) {
-                    const int64_t i01 = i1 / sf1;
+                    const int64_t i01 = MIN((int64_t)(i1 / sf1), ne01 - 1);
                     for (int64_t i0 = 0; i0 < ne0; i0++) {
-                        const int64_t i00 = i0 / sf0;
+                        const int64_t i00 = MIN((int64_t)(i0 / sf0), ne00 - 1);
 
                         const float * x = (float *)((char *) src0->data + i00*nb00 + i01*nb01 + i02*nb02 + i03*nb03);
                               float * y = (float *)((char *)  dst->data +  i0*nb0  +  i1*nb1  +  i2*nb2  +  i3*nb3);
