@@ -12034,45 +12034,6 @@ class HunyuanVLVisionModel(MmprojModel):
         if name.startswith("model."):
             return
 
-        # Remap PatchMerger tensors to match HunyuanOCR GGUF naming exactly,
-        # so that the same clip.cpp tensor-loading case can be shared.
-        #
-        # Python name                    -> GGUF name
-        # vit.perceive.proj.0.*          -> mm.0.*
-        # vit.perceive.proj.2.*          -> mm.2.*
-        # vit.perceive.mlp.*             -> mm.model.fc.*
-        # vit.perceive.before_rms.*      -> mm.pre_norm.*
-        # vit.perceive.after_rms.*       -> mm.post_norm.*
-        # vit.perceive.image_newline     -> v.image_newline
-        # vit.perceive.image_begin       -> mm.image_begin
-        # vit.perceive.image_end         -> mm.image_end
-        # vit.perceive.image_sep         -> v.view_seperator
-        if name.startswith("vit.perceive."):
-            suffix = name[len("vit.perceive."):]
-            if suffix.startswith("proj."):
-                # proj.0.weight -> mm.0.weight, proj.2.weight -> mm.2.weight
-                new_name = "mm." + suffix[len("proj."):]
-            elif suffix.startswith("mlp."):
-                # mlp.weight -> mm.model.fc.weight
-                new_name = "mm.model.fc." + suffix[len("mlp."):]
-            elif suffix.startswith("before_rms."):
-                # before_rms.weight -> mm.pre_norm.weight
-                new_name = "mm.pre_norm." + suffix[len("before_rms."):]
-            elif suffix.startswith("after_rms."):
-                # after_rms.weight -> mm.post_norm.weight
-                new_name = "mm.post_norm." + suffix[len("after_rms."):]
-            elif suffix == "image_newline":
-                new_name = "v.image_newline"
-            elif suffix == "image_sep":
-                new_name = "v.view_seperator"
-            else:
-                # image_begin, image_end -> mm.image_begin, mm.image_end
-                new_name = "mm." + suffix
-            yield (new_name, data_torch)
-            return
-
-        # All other vit.* tensors (patch embed, position embed, transformer layers)
-        # go through the standard MmprojModel mapping
         if name.startswith("vit."):
             if "position_embedding" in name:
                 data_torch = data_torch[1:]  # [16385, n_embd] -> [16384, n_embd]
