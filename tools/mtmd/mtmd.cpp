@@ -37,8 +37,12 @@ struct mtmd_image_tokens {
     uint32_t nx; // number of tokens in x direction
     uint32_t ny; // number of tokens in y direction
     bool use_mrope_pos = false; // use M-RoPE position counting (the whole image is 1 temporal position)
-    uint32_t n_tokens_total = 0;
-    uint32_t n_tokens() const { return n_tokens_total > 0 ? n_tokens_total : nx * ny; }
+    bool use_xdrope_pos = false; // use XD-RoPE position counting
+    uint32_t n_boi = 0; // number of BOI tokens, for xdrope
+    uint32_t n_eoi = 0; // number of EOI tokens, for xdrope
+    uint32_t n_newline = 0; // number of image newline tokens, for xdrope
+    uint32_t image_idx = 0; // image index, for xdrope
+    uint32_t n_tokens() const { return nx * ny + n_newline + n_boi + n_eoi; }
     clip_image_f32_batch batch_f32; // preprocessed image patches
     std::string id; // optional user-defined ID, useful for KV cache tracking
 
@@ -47,7 +51,11 @@ struct mtmd_image_tokens {
             nx,
             ny,
             use_mrope_pos,
-            n_tokens_total,
+            use_xdrope_pos,
+            n_boi,
+            n_eoi,
+            n_newline,
+            image_idx,
             batch_f32.clone(),
             id
         };
@@ -781,11 +789,16 @@ struct mtmd_tokenizer {
                     image_tokens->nx = clip_n_output_tokens_x(ctx->ctx_v, batch_f32.entries[0].get());
                     image_tokens->ny = clip_n_output_tokens_y(ctx->ctx_v, batch_f32.entries[0].get());
                     image_tokens->use_mrope_pos = true;
-                    // if total token count != nx*ny (e.g. HunyuanVL adds row newlines + BOI/EOI),
-                    // store the actual count so that the embedding buffer is sized correctly
-                    if (n_tokens != (size_t)(image_tokens->nx * image_tokens->ny)) {
-                        image_tokens->n_tokens_total = n_tokens;
-                    }
+                } else if(mtmd_decode_use_xdrope(ctx)) {
+                    // (e.g. HunyuanVL adds row newlines + BOI/EOI),
+                    // HunyuanVL: 1 BOI + ny rows × (nx tokens + 1 newline) + 1 EOI
+                    image_tokens->nx = clip_n_output_tokens_x(ctx->ctx_v, batch_f32.entries[0].get());
+                    image_tokens->ny = clip_n_output_tokens_y(ctx->ctx_v, batch_f32.entries[0].get());
+                    image_tokens->n_boi = 1;
+                    image_tokens->n_eoi = 1;
+                    image_tokens->n_newline = image_tokens->ny;
+                    image_tokens->image_idx = 0;
+                    image_tokens->use_xdrope_pos = true;
                 } else {
                     // other models, we only need the total number of tokens
                     image_tokens->nx = n_tokens;
@@ -1047,15 +1060,19 @@ bool mtmd_decode_use_mrope(mtmd_context * ctx) {
         case PROJECTOR_TYPE_QWEN3VL:
         case PROJECTOR_TYPE_GLM4V:
         case PROJECTOR_TYPE_PADDLEOCR:
-        case PROJECTOR_TYPE_HUNYUANVL:
             return true;
         default:
             return false;
     }
 }
 
-bool mtmd_decode_use_mrope_hunyuanvl(mtmd_context * ctx) {
-    return ctx->proj_type_v() == PROJECTOR_TYPE_HUNYUANVL;
+bool mtmd_decode_use_xdrope(mtmd_context * ctx) {
+    switch (ctx->proj_type_v()) {
+        case PROJECTOR_TYPE_HUNYUANVL:
+            return true;
+        default:
+            return false;
+    }
 }
 
 bool mtmd_support_vision(mtmd_context * ctx) {
@@ -1261,9 +1278,39 @@ size_t mtmd_image_tokens_get_ny(const mtmd_image_tokens * image_tokens) {
 
 mtmd_decoder_pos mtmd_image_tokens_get_decoder_pos(const mtmd_image_tokens * image_tokens, size_t i) {
     mtmd_decoder_pos pos;
-    pos.t = 0;
-    pos.x = i % image_tokens->nx;
-    pos.y = i / image_tokens->nx;
+    if (image_tokens->use_xdrope_pos == true) {
+        // HunyuanVL: BOI + rows with newlines + EOI
+        const uint32_t nx = image_tokens->nx;
+        const uint32_t n_total = image_tokens->n_tokens();
+        const uint32_t image_idx = image_tokens->image_idx;
+        // Layout: [BOI] [token(0,0)...token(nx-1,0)] [newline(0)] ... [token(0,ny-1)...token(nx-1,ny-1)] [newline(ny-1)] [EOI]
+        // n_total = 2 + ny * (nx + 1)
+        if (i == 0) {
+            // BOI token - all 4 dims = sequential index
+            pos.t = i; pos.x = i; pos.y = i; pos.z = i;
+        } else if (i == n_total - 1) {
+            // EOI token - all 4 dims = sequential index
+            pos.t = i; pos.x = i; pos.y = i; pos.z = i;
+        } else {
+            // content token or newline
+            uint32_t offset = (uint32_t)i - 1;
+            uint32_t row = offset / (nx + 1);
+            uint32_t col = offset % (nx + 1);
+            if (col < nx) {
+                // regular token at (row, col)
+                pos.t = i; pos.x = col; pos.y = row; pos.z = image_idx;
+            } else {
+                // newline token at end of row
+                pos.t = i; pos.x = nx; pos.y = row; pos.z = image_idx;
+            }
+        }
+    } else {
+        // standard 2D grid (Qwen2VL, etc.)
+        pos.t = 0;
+        pos.x = i % image_tokens->nx;
+        pos.y = i / image_tokens->nx;
+        pos.z = 0;
+    }
     return pos;
 }
 
@@ -1273,14 +1320,14 @@ const char * mtmd_image_tokens_get_id(const mtmd_image_tokens * image_tokens) {
 
 llama_pos mtmd_image_tokens_get_n_pos(const mtmd_image_tokens * image_tokens) {
     if (image_tokens->use_mrope_pos) {
-        if (image_tokens->n_tokens_total > 0) {
-            // HunyuanVL: the sequential (dim-0) position advances by the full token count
-            // (includes BOI/EOI and row newline tokens), not by max(nx, ny)
-            return image_tokens->n_tokens();
-        }
         // for M-RoPE, temporal dimension = max(t,h,w)
         // t is omitted as we don't support video input
         return std::max(image_tokens->nx, image_tokens->ny);
+    }
+    if (image_tokens->use_xdrope_pos) {
+        // HunyuanVL: the sequential (dim-0) position advances by the full token count
+        // (includes BOI/EOI and row newline tokens), not by max(nx, ny)
+        return image_tokens->n_tokens();
     }
     return image_tokens->n_tokens();
 }

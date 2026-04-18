@@ -117,9 +117,9 @@ MTMD_API bool mtmd_decode_use_non_causal(mtmd_context * ctx, const mtmd_input_ch
 // whether the current model use M-RoPE for llama_decode
 MTMD_API bool mtmd_decode_use_mrope(mtmd_context * ctx);
 
-// whether the current model uses HunyuanVL-style M-RoPE
+// whether the current model uses XD-RoPE: HunyuanVL-style M-RoPE
 // (token layout differs from standard 2D grid: BOI + rows-with-newlines + EOI)
-MTMD_API bool mtmd_decode_use_mrope_hunyuanvl(mtmd_context * ctx);
+MTMD_API bool mtmd_decode_use_xdrope(mtmd_context * ctx);
 
 // whether the current model supports vision input
 MTMD_API bool mtmd_support_vision(mtmd_context * ctx);
@@ -200,10 +200,11 @@ struct mtmd_decoder_pos {
     uint32_t t;
     uint32_t x;
     uint32_t y;
+    uint32_t z;
 };
 // get position for decoder attention, to be used by M-RoPE models
 // i is the index of the embedding token, ranging from 0 to mtmd_image_tokens_get_n_tokens() - 1
-// return relative position (for example, embedding 0 will have position (0, 0, 0); remember to adjust it to the current absolute position)
+// return relative position (for example, embedding 0 will have position (0, 0, 0, 0); remember to adjust it to the current absolute position)
 MTMD_API struct mtmd_decoder_pos mtmd_image_tokens_get_decoder_pos(const mtmd_image_tokens * image_tokens, size_t i);
 
 // tokenize an input text prompt and a list of bitmaps (images/audio)
