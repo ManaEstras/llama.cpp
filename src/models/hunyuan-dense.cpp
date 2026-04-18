@@ -6,7 +6,7 @@ llm_build_hunyuan_dense::llm_build_hunyuan_dense(const llama_model & model, cons
     GGML_ASSERT(n_embd_head == hparams.n_embd_head_k());
     GGML_ASSERT(n_embd_head == n_rot);
 
-    const bool use_mrope = hparams.use_mrope();
+    const bool use_xdrope = hparams.use_xdrope();
 
     int sections[4];
     std::copy(std::begin(hparams.rope_sections), std::begin(hparams.rope_sections) + 4, sections);
@@ -42,7 +42,7 @@ llm_build_hunyuan_dense::llm_build_hunyuan_dense(const llama_model & model, cons
             auto [Qcur, Kcur, Vcur] = build_qkv(model.layers[il], cur,
                     n_embd_head, n_head, n_head_kv, il);
 
-            if (use_mrope) {
+            if (use_xdrope) {
                 Qcur = ggml_rope_multi(
                             ctx0, Qcur, inp_pos, rope_factors,
                             n_rot, sections, rope_type, n_ctx_orig, freq_base, freq_scale,

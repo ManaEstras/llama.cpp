@@ -256,3 +256,7 @@ uint32_t llama_hparams::n_layer_kv() const {
 bool llama_hparams::use_mrope() const {
     return rope_sections[0] > 0 && rope_sections[1] > 0;
 }
+
+bool llama_hparams::use_xdrope() const {
+    return rope_sections[0] > 0 && rope_sections[1] > 0 && rope_sections[2] > 0 && rope_sections[3] > 0;
+}
