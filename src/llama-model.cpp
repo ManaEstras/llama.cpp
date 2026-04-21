@@ -2612,11 +2612,6 @@ void llama_model::load_hparams(llama_model_loader & ml) {
                         * powf(hparams.rope_scaling_alpha, (float)dim / (float)(dim - 2));
                 }
 
-                if (hparams.n_expert <= 1) {
-                    hparams.n_expert      = 0;
-                    hparams.n_expert_used = 0;
-                }
-
                 switch (hparams.n_embd) {
                     case 1024: type = LLM_TYPE_0_5B; break;
                     case 2048: type = LLM_TYPE_1_8B; break;
