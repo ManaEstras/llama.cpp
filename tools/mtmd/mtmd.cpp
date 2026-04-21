@@ -1317,12 +1317,14 @@ mtmd_decoder_pos mtmd_image_tokens_get_decoder_pos(const mtmd_image_tokens * ima
                     pos.z = pos_0 + i;
                 } else {
                     // content token at (row, col), or the trailing newline of a row (col == nx)
+                    //   section 0 = sequential, section 1 = w(col), section 2 = h(row), section 3 = image_count.
+                    // set_position_mrope_2d writes .y -> section 1 and .x -> section 2
                     const uint32_t offset = (uint32_t)i - 1;
                     const uint32_t row    = offset / (nx + 1);
                     const uint32_t col    = offset % (nx + 1);
                     pos.t = pos_0 + i;
-                    pos.x = col;
-                    pos.y = row;
+                    pos.x = row;
+                    pos.y = col;
                     pos.z = image_tokens->image_idx;
                 }
             } break;
