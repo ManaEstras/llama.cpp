@@ -4157,7 +4157,7 @@ class VisionProjectorType:
     YOUTUVL = "youtuvl"
     NEMOTRON_V2_VL = "nemotron_v2_vl"
     HUNYUANOCR     = "hunyuanocr"
-    HUNYUANVL      = "hunyuanvl_merger"
+    HUNYUANVL      = "hunyuanvl"
 
 
 # Items here are (block size, type size)

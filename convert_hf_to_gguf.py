@@ -11994,51 +11994,56 @@ class HunYuanModel(TextModel):
 
 
 @ModelBase.register("HunYuanVLForConditionalGeneration")
-class HunyuanOCRVisionModel(MmprojModel):
+class HunyuanVLVisionModel(MmprojModel):
+    # Handles both HunyuanOCR and HunyuanVL, which share the HF architecture name
+    # "HunYuanVLForConditionalGeneration" and the `vit.perceive.*` vision layout.
+    # Each variant maps to a different projector type in clip.cpp so image
+    # preprocessing follows the correct code path.
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         assert self.hparams_vision is not None
-        # HunyuanOCR uses max_image_size instead of image_size
+        # HunyuanOCR / HunyuanVL uses max_image_size instead of image_size
         if "image_size" not in self.hparams_vision:
             self.hparams_vision["image_size"] = self.hparams_vision.get("max_image_size", 2048)
+
+    @staticmethod
+    def is_ocr_variant(hparams: dict) -> bool:
+        """Return True for HunyuanOCR, False for HunyuanVL.
+
+        The projector's output dim must equal the text model's hidden_size by
+        construction (that's what "projector" means). HunyuanOCR pairs a 1B text
+        backbone (hidden=1024); HunyuanVL pairs a 4B one (hidden=3072). So the
+        ViT -> LLM projection dim is a hard architectural signature, not a
+        magic number.
+        """
+        vision_out = int((hparams.get("vision_config") or {}).get("out_hidden_size", 0))
+        return vision_out == 1024
 
     def set_gguf_parameters(self):
         super().set_gguf_parameters()
         assert self.hparams_vision is not None
-        hparams = self.hparams_vision
-        self.gguf_writer.add_clip_projector_type(gguf.VisionProjectorType.HUNYUANOCR)
-        self.gguf_writer.add_vision_use_gelu(True)
-        self.gguf_writer.add_vision_attention_layernorm_eps(hparams.get("rms_norm_eps", 1e-5))
-        self.gguf_writer.add_vision_spatial_merge_size(hparams.get("spatial_merge_size", 2))
-        self.gguf_writer.add_vision_min_pixels(self.preprocessor_config["min_pixels"])
-        self.gguf_writer.add_vision_max_pixels(self.preprocessor_config["max_pixels"])
+        vcfg = self.hparams_vision
+
+        if self.is_ocr_variant(self.global_config):
+            # --- HunyuanOCR ---
+            self.gguf_writer.add_clip_projector_type(gguf.VisionProjectorType.HUNYUANOCR)
+            self.gguf_writer.add_vision_use_gelu(True)
+            self.gguf_writer.add_vision_attention_layernorm_eps(vcfg.get("rms_norm_eps", 1e-5))
+            self.gguf_writer.add_vision_spatial_merge_size(vcfg.get("spatial_merge_size", 2))
+            self.gguf_writer.add_vision_min_pixels(self.preprocessor_config["min_pixels"])
+            self.gguf_writer.add_vision_max_pixels(self.preprocessor_config["max_pixels"])
+            return
+
+        # --- HunyuanVL ---
+        self.gguf_writer.add_clip_projector_type(gguf.VisionProjectorType.HUNYUANVL)
+        self.gguf_writer.add_vision_use_gelu(str(vcfg["hidden_act"]).lower() == "gelu")
+        self.gguf_writer.add_vision_attention_layernorm_eps(float(vcfg["rms_norm_eps"]))
+        self.gguf_writer.add_vision_spatial_merge_size(int(vcfg["spatial_merge_size"]))
+        self.gguf_writer.add_vision_min_pixels(int(self.preprocessor_config["min_pixels"]))
+        self.gguf_writer.add_vision_max_pixels(int(self.preprocessor_config["max_pixels"]))
 
     def modify_tensors(self, data_torch: Tensor, name: str, bid: int | None) -> Iterable[tuple[str, Tensor]]:
-        if not name.startswith("vit."):
-            return  # skip text tensors
-        # strip CLS token (row 0) from position embeddings so resize_position_embeddings works
-        if "position_embedding" in name:
-            data_torch = data_torch[1:]  # [n_patches+1, n_embd] -> [n_patches, n_embd]
-        yield from super().modify_tensors(data_torch, name, bid)
-
-    def tensor_force_quant(self, name, new_name, bid, n_dims):
-        # force conv weights to F32 or F16 to avoid BF16 IM2COL issues on Metal
-        if ("mm.0." in new_name or "mm.2." in new_name) and new_name.endswith(".weight"):
-            return gguf.GGMLQuantizationType.F16 if self.ftype == gguf.LlamaFileType.MOSTLY_F16 else gguf.GGMLQuantizationType.F32
-        return super().tensor_force_quant(name, new_name, bid, n_dims)
-
-
-@ModelBase.register("HunYuanVLForConditionalGeneration")
-class HunyuanVLVisionModel(MmprojModel):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        assert self.hparams_vision is not None
-        # Compute image_size from max_image_size if not explicitly set
-        if "image_size" not in self.hparams_vision:
-            self.hparams_vision["image_size"] = self.hparams_vision.get("max_image_size", 2048)
-
-    def modify_tensors(self, data_torch: Tensor, name: str, bid: int | None) -> Iterable[tuple[str, Tensor]]:
-        # Skip text-model tensors (they go into the LLM gguf file)
         if not name.startswith("vit."):
             return
         # strip CLS token (row 0) from position embeddings so resize_position_embeddings works
@@ -12046,53 +12051,61 @@ class HunyuanVLVisionModel(MmprojModel):
             data_torch = data_torch[1:]  # [n_patches+1, n_embd] -> [n_patches, n_embd]
         yield from super().modify_tensors(data_torch, name, bid)
 
-    def tensor_force_quant(self, name: str, new_name: str, bid: int | None, n_dims: int):
-        # Keep the final linear projection (mm.mlp.weight) in F16 to preserve precision
-        if new_name == "mm.mlp.weight":
-            return gguf.GGMLQuantizationType.F16
-        if ("mm.proj." in new_name) and new_name.endswith(".weight"):
+    def tensor_force_quant(self, name, new_name, bid, n_dims):
+        # force conv weights to F32 or F16 to avoid BF16 IM2COL issues on Metal
+        # Both HunyuanOCR and HunyuanVL emit the ViT -> LLM projection as mm.0/mm.2.
+        if ("mm.0." in new_name or "mm.2." in new_name) and new_name.endswith(".weight"):
             return gguf.GGMLQuantizationType.F16 if self.ftype == gguf.LlamaFileType.MOSTLY_F16 else gguf.GGMLQuantizationType.F32
         return super().tensor_force_quant(name, new_name, bid, n_dims)
-
-    def set_gguf_parameters(self):
-        super().set_gguf_parameters()
-        assert self.hparams_vision is not None
-        hparams = self.hparams_vision
-
-        self.gguf_writer.add_clip_projector_type(gguf.VisionProjectorType.HUNYUANVL)
-        self.gguf_writer.add_vision_use_gelu(True)
-
-        if (rms_norm_eps := hparams.get("rms_norm_eps")) is not None:
-            self.gguf_writer.add_vision_attention_layernorm_eps(rms_norm_eps)
-        if (merge_size := hparams.get("spatial_merge_size")) is not None:
-            self.gguf_writer.add_vision_spatial_merge_size(int(merge_size))
 
 
 @ModelBase.register("HunYuanVLForConditionalGeneration")
 class HunyuanVLTextModel(HunYuanModel):
+    # The "HunYuanVLForConditionalGeneration" HF architecture covers both HunyuanOCR
+    # and HunyuanVL. HunyuanOCR reuses the HunYuan-Dense text backbone (standard RoPE),
+    # while HunyuanVL introduces a new LLM arch with XD-RoPE. Detect the variant from
+    # the config and pick the matching GGUF architecture.
     model_arch = gguf.MODEL_ARCH.HUNYUAN_VL
+
+    @staticmethod
+    def _is_ocr_config(hparams: dict) -> bool:
+        # OCR pairs a 1B text backbone (hidden=1024) with a ViT projector that
+        # outputs 1024-d; HunyuanVL uses 3072-d. Keep in sync with
+        # HunyuanVLVisionModel.is_ocr_variant.
+        return int((hparams.get("vision_config") or {}).get("out_hidden_size", 0)) == 1024
+
+    def __init__(self, *args, **kwargs):
+        dir_model = args[0] if args else kwargs.get("dir_model")
+        raw_hparams = kwargs.get("hparams") or ModelBase.load_hparams(dir_model, is_mistral_format=False)
+        if self._is_ocr_config(raw_hparams):
+            self.model_arch = gguf.MODEL_ARCH.HUNYUAN_DENSE
+        else:
+            self.model_arch = gguf.MODEL_ARCH.HUNYUAN_VL
+        super().__init__(*args, **kwargs)
 
     def set_gguf_parameters(self):
         super().set_gguf_parameters()
 
-        if self.rope_parameters.get("rope_type") == "xdrope":
-            alpha = float(self.rope_parameters.get("alpha", 50))
-            base  = float(self.rope_parameters.get("rope_theta", 10000.0))
+        # Only emit XD-RoPE metadata for the HunyuanVL backbone; HunyuanOCR uses
+        # the HunYuan-Dense arch which already handles standard rope in super().
+        if self.model_arch != gguf.MODEL_ARCH.HUNYUAN_VL:
+            return
 
-            # Write raw values; C++ computes: freq_base = base * alpha^(dim/(dim-2))
-            self.gguf_writer.add_rope_freq_base(base)
-            self.gguf_writer.add_rope_scaling_alpha(alpha)
-            self.gguf_writer.add_rope_scaling_type(gguf.RopeScalingType.NONE)
-            self.gguf_writer.add_rope_scaling_factor(1)
-            self.gguf_writer.add_rope_scaling_orig_ctx_len(256 * 1024)
-            self.gguf_writer.add_context_length(256 * 1024)
+        if self.rope_parameters.get("rope_type") != "xdrope":
+            return
 
-            # xdrope_section defines which head-dim slices use each positional axis
-            # Reuse the M-RoPE rope_dimension_sections mechanism
-            xdrope_section = list(self.rope_parameters.get("xdrope_section", []))
-            while len(xdrope_section) < 4:
-                xdrope_section.append(0)
-            self.gguf_writer.add_rope_dimension_sections(xdrope_section[:4])
+        # defaults for HunyuanVL. The C++ side later computes:
+        #   freq_base = rope_theta * alpha ** (head_dim / (head_dim - 2))
+        self.gguf_writer.add_rope_freq_base(float(self.rope_parameters["rope_theta"]))
+        self.gguf_writer.add_rope_scaling_alpha(float(self.rope_parameters["alpha"]))
+        self.gguf_writer.add_rope_scaling_type(gguf.RopeScalingType.NONE)
+        self.gguf_writer.add_rope_scaling_factor(float(self.rope_parameters.get("factor", 1)))
+
+        ctx_len = int(self.hparams["max_position_embeddings"])
+        self.gguf_writer.add_rope_scaling_orig_ctx_len(ctx_len)
+        self.gguf_writer.add_context_length(ctx_len)
+
+        self.gguf_writer.add_rope_dimension_sections(list(self.rope_parameters["xdrope_section"]))
 
     def modify_tensors(self, data_torch: Tensor, name: str, bid: int | None) -> Iterable[tuple[str, Tensor]]:
         # Skip vision tensors — they are written by HunyuanVLVisionModel

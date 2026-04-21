@@ -44,8 +44,7 @@ struct mtmd_image_tokens {
     uint32_t nx; // number of tokens in x direction
     uint32_t ny; // number of tokens in y direction
     mtmd_pos_type pos = MTMD_POS_TYPE_NORMAL;
-    // HunyuanVL-specific layout state (only meaningful when pos == MTMD_POS_TYPE_HUNYUANVL)
-    uint32_t image_idx = 0; // 0-based position of this image among image chunks in the prompt
+    uint32_t image_idx = 0; // 0-based position of this image among image chunks in the prompt(used by pos == MTMD_POS_TYPE_HUNYUANVL)
     uint32_t n_tokens() const {
         if (pos == MTMD_POS_TYPE_HUNYUANVL) {
             // [BOI] [row0 tokens + newline] ... [row(ny-1) tokens + newline] [EOI]
