@@ -3514,19 +3514,17 @@ bool clip_image_batch_encode(clip_ctx * ctx, const int n_threads, const clip_ima
                     const float fy = ((float)y + 0.5f) / sy - 0.5f;
                     int y0 = (int)std::floor(fy);
                     int y1 = y0 + 1;
-                    if (y0 < 0) y0 = 0; if (y0 > n_grid - 1) y0 = n_grid - 1;
-                    if (y1 < 0) y1 = 0; if (y1 > n_grid - 1) y1 = n_grid - 1;
-                    float wy1 = fy - (float)y0;
-                    if (wy1 < 0.0f) wy1 = 0.0f; if (wy1 > 1.0f) wy1 = 1.0f;
+                    y0 = std::clamp(y0, 0, n_grid - 1);
+                    y1 = std::clamp(y1, 0, n_grid - 1);
+                    float wy1 = std::clamp(fy - (float)y0, 0.0f, 1.0f);
                     const float wy0 = 1.0f - wy1;
                     for (int x = 0; x < out_w; ++x) {
                         const float fx = ((float)x + 0.5f) / sx - 0.5f;
                         int x0 = (int)std::floor(fx);
                         int x1 = x0 + 1;
-                        if (x0 < 0) x0 = 0; if (x0 > n_grid - 1) x0 = n_grid - 1;
-                        if (x1 < 0) x1 = 0; if (x1 > n_grid - 1) x1 = n_grid - 1;
-                        float wx1 = fx - (float)x0;
-                        if (wx1 < 0.0f) wx1 = 0.0f; if (wx1 > 1.0f) wx1 = 1.0f;
+                        x0 = std::clamp(x0, 0, n_grid - 1);
+                        x1 = std::clamp(x1, 0, n_grid - 1);
+                        float wx1 = std::clamp(fx - (float)x0, 0.0f, 1.0f);
                         const float wx0 = 1.0f - wx1;
 
                         const float w00 = wy0 * wx0;
