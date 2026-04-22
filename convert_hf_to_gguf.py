@@ -12074,14 +12074,13 @@ class HunyuanVLTextModel(HunYuanModel):
         # HunyuanVLVisionModel.is_ocr_variant.
         return int((hparams.get("vision_config") or {}).get("out_hidden_size", 0)) == 1024
 
-    def __init__(self, *args, **kwargs):
-        dir_model = args[0] if args else kwargs.get("dir_model")
+    def __init__(self, dir_model: Path, *args, **kwargs):
         raw_hparams = kwargs.get("hparams") or ModelBase.load_hparams(dir_model, is_mistral_format=False)
         if self._is_ocr_config(raw_hparams):
             self.model_arch = gguf.MODEL_ARCH.HUNYUAN_DENSE
         else:
             self.model_arch = gguf.MODEL_ARCH.HUNYUAN_VL
-        super().__init__(*args, **kwargs)
+        super().__init__(dir_model, *args, **kwargs)
 
     def set_gguf_parameters(self):
         super().set_gguf_parameters()
